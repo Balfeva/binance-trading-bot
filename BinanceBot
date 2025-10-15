@@ -1,4 +1,5 @@
 Schema of the bot:
+BinanceBot/
 ├── binance_api/
 │   ├── client.py
 │   ├── utils.py
@@ -90,6 +91,7 @@ Schema of the bot:
 └── run.sh
 └── monitor.sh
 
+the code of the bot that containes 67 files that are named strating with ### [FILE]. there are 10220 lines
 ### [FILE] utils/queue.py 
 
 import threading
@@ -5406,26 +5408,257 @@ class LightRL:
         return np.argmax(logits)
 
 ### [FILE] config/free_tier.yaml
-features:
-  triangular_arbitrage: true    # Core arbitrage engine
-  quantum_overlays: false       # Disabled for free tier
-  reinforcement_learning: false # Disabled for free tier
-  email_notifications: true     # Lightweight alerts
-  
-performance:
-  max_active_pairs: 8           # Optimal for 1GB RAM
-  cache_size: 100               # Reduced from standard 500
-  polling_interval: 1.0         # Slightly slower polling
-  jit_prewarm: true             # Helps initial performance
-  
-risk_management:
-  min_profit_threshold: 0.0012  # Higher threshold = fewer trades
-  max_trade_amount: 35          # Smaller position sizes
-  daily_loss_limit: -75         # More conservative (-100 in standard)
-  
-monitoring:
-  health_checks: true
-  memory_check_interval: 120    # More frequent checks
+aws_free_tier:
+  max_operating_hours_per_day: 6
+  supported_instance_types:
+    - "t2.micro"
+    - "t3.micro"
+  monthly_free_hours: 750
+  cost_alerts:
+    monthly_threshold: 0.50
+    projected_overage_alert: 1.00
+
+scheduling:
+  operational_windows:
+    - start: "09:00"
+      end: "12:00"
+    - start: "14:00"
+      end: "17:00"
+  max_daily_runtime: 6
+  min_uptime: 1
+  max_downtime: 18
+  timezone: "Asia/Singapore"
+  utc_offset: "+08:00"
+
+daily_schedule:
+  start_time: "09:00"
+  stop_time: "17:00"
+  enable_auto_shutdown: true
+  timezone: "Asia/Singapore"
+
+free_tier_limits:
+  max_daily_runtime_hours: 6
+  instance_type: "t2.micro"
+  shutdown_buffer_minutes: 5
+
+performance_optimization:
+  memory:
+    max_utilization_percent: 85
+    alert_threshold: 70
+  cpu:
+    baseline_performance: 10
+    max_burst_utilization: 95
+    sustainable_utilization: 20
+  network:
+    max_bandwidth_mbps: 100
+    monitor_data_transfer: true
+
+binance_api_optimization:
+  requests_per_minute: 1200
+  weight_limit_buffer: 0.2
+  max_websocket_connections: 5
+  http_pool_size: 3
+  kline_intervals:
+    - "1m"
+    - "5m" 
+    - "15m"
+    - "1h"
+
+logging_monitoring:
+  log_level: "INFO"
+  performance_metrics_interval: 300
+  health_check_interval: 60
+  cloudwatch:
+    enabled: true
+    custom_metrics: true
+    log_retention_days: 7
+
+ml_training:
+  training_schedule:
+    enabled: false
+    allowed_window: "02:00-04:00"
+  max_training_time_minutes: 30
+  model_size_limit_mb: 50
+
+compliance:
+  enforce_usage_limits: true
+  auto_shutdown: true
+  usage_reporting: true
+  max_monthly_cost: 0.00
+
+instance_management:
+  startup_sequence:
+    - "timezone_verification"
+    - "health_check"
+    - "api_connectivity_test"
+    - "market_data_validation"
+    - "strategy_initialization"
+  shutdown_sequence:
+    - "close_open_orders"
+    - "portfolio_balance_check"
+    - "save_trading_state"
+    - "performance_report"
+    - "graceful_shutdown"
+  timezone_verification:
+    expected_timezone: "Asia/Singapore"
+    fallback_timezone: "UTC"
+    verification_interval: 3600
+
+schedule_sync:
+  primary_config: "config.yaml"
+  sync_interval: 300
+  conflict_resolution: "primary_preference"
+  validation_checks: true
+
+log_management:
+  enable_rotation: true
+  max_file_size_mb: 10
+  backup_count: 5
+  compression: true
+  total_size_limit_mb: 100
+  rotation_interval_minutes: 60
+  cleanup_threshold_gb: 1.0
+  emergency_cleanup_threshold_gb: 0.5
+  auto_cleanup: true
+  cleanup_cooldown_minutes: 30
+  retain_days: 7
+  compress_after_days: 3
+  delete_after_days: 30
+
+free_tier_optimization:
+  max_memory_mb: 512
+  max_cpu_percent: 80
+  max_disk_usage_percent: 85
+  max_daily_runtime_hours: 6
+  graceful_shutdown_minutes: 15
+  max_log_size_mb: 100
+  temp_file_cleanup_interval_minutes: 60
+  cache_cleanup_interval_minutes: 120
+  disk_check_interval_seconds: 300
+  log_rotation_check_interval_seconds: 600
+
+watchdog_enhanced:
+  monitoring_interval: 60
+  alert_thresholds:
+    cpu_percent: 85.0
+    memory_percent: 90.0
+    disk_percent: 95.0
+    disk_free_gb: 1.0
+    network_errors: 10
+  enable_log_rotation_monitoring: true
+  max_log_size_alert_mb: 80
+  enable_disk_space_alerts: true
+
+# >>> NEW: Load Testing Configuration Section (ADDITION ONLY)
+load_testing:
+  enabled: false
+  traffic_multiplier: 1.0
+  duration_minutes: 60
+  ramp_up_time: 300
+  scenarios:
+    - name: "normal"
+      multiplier: 1.0
+      duration: 300
+    - name: "2x_traffic" 
+      multiplier: 2.0
+      duration: 300
+    - name: "5x_traffic"
+      multiplier: 5.0
+      duration: 300
+    - name: "10x_traffic"
+      multiplier: 10.0
+      duration: 300
+  monitoring:
+    enable_detailed_metrics: true
+    alert_on_degradation: true
+    auto_stop_on_critical: true
+  resource_allocation:
+    max_memory_percent: 90
+    max_cpu_percent: 95
+    network_bandwidth_limit_mbps: 50
+  performance_thresholds:
+    max_response_time_ms: 1000
+    max_error_rate_percent: 5
+    min_throughput_requests_per_second: 10
+
+# >>> NEW: High-Frequency Trading Optimizations (ADDITION ONLY)
+hft_optimizations:
+  enabled: false
+  queue_optimizations:
+    max_batch_size: 200
+    processing_delay_ms: 0.5
+    bulk_operations: true
+    priority_queues: true
+  connection_optimizations:
+    connection_pool_size: 10
+    max_pool_size: 30
+    keepalive_interval: 30
+    timeout_optimization: true
+  message_processing:
+    batch_processing: true
+    max_batch_size: 100
+    batch_timeout_ms: 10
+    parallel_processing: true
+
+# >>> NEW: 6-Hour Daily Scheduler Configuration (ADDITION ONLY)
+daily_six_hour_scheduler:
+  enabled: true
+  daily_hours: 6
+  operation_window: "00:00-06:00"
+  timezone: "Asia/Singapore"
+  auto_start: true
+  enforce_strict_limits: true
+  shutdown_buffer_minutes: 10
+  monitoring:
+    check_interval_seconds: 60
+    status_report_interval_minutes: 30
+    alert_on_limit_approach: true
+  compliance:
+    enforce_singapore_timezone: true
+    validate_aws_region: true
+    require_daily_reset: true
+
+# >>> NEW: Enhanced Resource Management (ADDITION ONLY)
+enhanced_resource_management:
+  enabled: true
+  disk_space_monitoring:
+    check_interval_seconds: 300
+    critical_threshold_gb: 0.5
+    warning_threshold_gb: 1.0
+    emergency_cleanup_auto: true
+  log_management:
+    rotation_interval_seconds: 1800
+    max_total_size_mb: 100
+    compression_enabled: true
+    retention_days: 7
+  memory_management:
+    aggressive_cleanup: true
+    cache_limits:
+      analysis_cache_mb: 50
+      market_data_cache_mb: 100
+      order_cache_mb: 20
+
+# PRESERVE: All existing sections remain unchanged
+binance:
+  testnet: false
+  recv_window: 5000
+  timeout: 10
+
+websocket:
+  reconnect_delay: 5
+  max_reconnect_attempts: 10
+  heartbeat_interval: 30
+
+logging:
+  level: "INFO"
+  format: "detailed"
+  enable_file_logging: true
+  enable_console_logging: true
+
+compatibility:
+  preserve_original_config: true
+  legacy_support: true
+  migration_safe: true
 
 ### [FILE] optimizations/path_generator.py
 import numpy as np
@@ -9545,24 +9778,169 @@ class TurboArbitrage:
 
 ### [FILE] config/presets/high_volatility.yaml
 
-features:
-  triangular_arbitrage: true
-  quantum_overlays: false  # Disable overlays in erratic markets
+preset: "high_volatility"
+description: "Optimized for high volatility market conditions with USDC pairs"
 
+trading:
+  symbols: ["BTCUSDC", "ETHUSDC", "BNBUSDC", "SOLUSDC", "XRPUSDC", "ADAUSDC", "DOGEUSDC", "DOTUSDC"]
+  quote_currency: "USDC"
+  position_size_percent: 0.15  # Reduced from 0.20 for higher volatility
+  max_position_size: 15000     # Reduced from 20000
+  min_order_size: 15           # Increased from 10
+
+risk_management:
+  max_risk_per_trade: 0.10     # Reduced from 0.15
+  min_profit_threshold: 0.005  # Increased from 0.003 for better risk-reward
+  daily_loss_limit: -30        # Tighter from -40
+  volatility_multiplier: 1.5
+  max_drawdown: 0.25
+
+indicators:
+  atr_period: 14
+  rsi_period: 14
+  bb_period: 20
+  bb_std: 2.5                  # Wider bands for volatility
+  ema_fast: 9
+  ema_slow: 21
+  volume_ma_period: 20
+
+entry_conditions:
+  volatility_threshold: 0.025   # Minimum ATR percentage
+  volume_multiplier: 1.3        # Minimum volume boost
+  trend_alignment: true
+  momentum_confirmation: true
+
+exit_conditions:
+  trailing_stop_atr: 2.0        # Wider stops for volatility
+  profit_target_atr: 3.5
+  time_exit_hours: 48           # Shorter time exits
 
 arbitrage:
-  min_profit: 0.15          # Raise profit threshold to reduce risk
+  min_profit_threshold: 0.006   # Increased from 0.004 for volatility
+  max_slippage: 0.002           # Increased slippage tolerance
+  simultaneous_trades: 2         # Reduced from 3
+
+performance:
+  polling_interval: 1.0         # Faster polling for volatile markets
+  cache_size: 150               # Larger cache
+  data_retention_hours: 72      # Longer retention for analysis
+
+# PRESERVED: All existing high volatility strategies and ML configurations
+ml_volatility:
+  enabled: true
+  prediction_confidence: 0.75
+  adaptive_learning: true
+  market_regime_detection: true
+
+# NEW: Enhanced volatility monitoring
+volatility_monitoring:
+  realtime_atr_tracking: true
+  volume_spike_detection: true
+  correlation_breakdown_alert: true
+  regime_change_sensitivity: "high"
 
 ### [FILE] config/config_secrets.yaml
 
-binance:
-  api_key: "mjklzyIlKZ4rQBisLCkkEzDLxASlNr45Dffnk8WjSvehMkhG8q9zPWbEry3wNAXD"
-  api_secret: "NYTD8AshtoNTNUAsnS3VK8QnXGLZeXY8orw4vrKhBtTOXGxKFCOe4Ytl8pIKptDX"
+# Binance API Configuration - ENDPOINTS ONLY (no keys)
+BINANCE_BASE_ENDPOINT: "https://api.binance.com"
+BINANCE_TESTNET: false
+BINANCE_TIMEOUT: 30
+BINANCE_RECV_WINDOW: 60000
 
-email:
-  sender: "paulbigbrothers@gmail.com"
-  app_password: "gisp gyzv ugpc pijh"
-  recipient: "paulbigbrothers@gmail.com"
+# Trading Configuration for USDC Pairs
+TRADING_ENABLED: true
+TRADING_MODE: "live"
+MAX_LEVERAGE: 1  # Changed to 1 for spot trading
+RISK_PER_TRADE: 0.02  # 2% risk per trade
+MAX_POSITION_SIZE: 0.2  # 20% of portfolio per position (as you requested)
+
+# USDC Trading Pairs
+TRADING_PAIRS: 
+  - "BTCUSDC"
+  - "ETHUSDC" 
+  - "BNBUSDC"
+  - "SOLUSDC"
+  - "XRPUSDC"
+  - "ADAUSDC"
+  - "DOGEUSDC"
+  - "DOTUSDC"
+
+# AWS Configuration - REGION ONLY (no credentials)
+AWS_REGION: "ap-southeast-1"
+
+# AWS Free Tier Optimization
+AWS_FREE_TIER_ENABLED: true
+AWS_DAILY_RUN_HOURS: 6
+AWS_STOP_INSTANCE_WHEN_IDLE: true
+AWS_COST_OPTIMIZATION: true
+
+# Database Configuration - URI ONLY (no credentials)
+MONGODB_URI: "mongodb://localhost:27017/binance_bot"
+MONGODB_DB_NAME: "binance_bot"
+
+# Email Configuration - SERVER SETTINGS ONLY (no passwords)
+EMAIL_SMTP_SERVER: "smtp.gmail.com"
+EMAIL_SMTP_PORT: 587
+EMAIL_USE_TLS: true
+EMAIL_USERNAME: "paulbigbrothers@gmail.com"
+EMAIL_FROM: "paulbigbrothers@gmail.com"
+EMAIL_TO: "paulbigbrothers@gmail.com"
+
+# Monitoring Configuration
+HEARTBEAT_INTERVAL: 60
+HEALTH_CHECK_TIMEOUT: 300
+PERFORMANCE_MONITORING: true
+SECURITY_MONITORING: true
+
+# Rate Limiting Configuration for Binance API
+RATE_LIMIT_TIER: "free_tier"
+MAX_REQUESTS_PER_MINUTE: 600
+MAX_ORDERS_PER_MINUTE: 120
+MAX_WEIGHT_PER_MINUTE: 2400
+
+# Strategy Configuration
+STRATEGY_ENABLED: true
+STRATEGY_NAME: "quantum_enhanced"
+STRATEGY_VERSION: "1.0.0"
+
+# Machine Learning Configuration
+ML_ENABLED: true
+ML_MODEL_PATH: "./ml/models/"
+ML_TRAINING_ENABLED: false
+
+# Emergency Settings
+EMERGENCY_STOP_ENABLED: true
+MAX_DRAWDOWN: 0.1
+MAX_DAILY_LOSS: 0.05
+
+# Logging Configuration
+LOG_LEVEL: "INFO"
+LOG_FILE: "logs/binance_bot.log"
+LOG_UPLOAD_ENABLED: true
+
+# Backup Configuration
+BACKUP_ENABLED: true
+BACKUP_INTERVAL: 3600
+BACKUP_PATH: "./backups/"
+
+# Environment-specific overrides
+development:
+  BINANCE_TESTNET: true
+  TRADING_ENABLED: false
+  LOG_LEVEL: "DEBUG"
+
+production:
+  BINANCE_TESTNET: false
+  TRADING_ENABLED: true
+  LOG_LEVEL: "INFO"
+
+# Feature flags
+features:
+  advanced_analytics: true
+  realtime_monitoring: true
+  automated_backups: true
+  cost_optimization: true
+  security_scanning: true
 
 security:
   encryption_key: "16008c892c29749c2ddc7bfd64a321d5676389eab11dc0c39055e699ded41f8060"
@@ -9610,9 +9988,9 @@ binance:
   testnet: false
   rate_limit: 2
 
-symbols: ["BTCUSDC", "ETHUSDC", "BNBUSDC", "SOLUSDC", "XRPUSDC", "ADAUSDC", "DOGEUSDC", "DOTUSDC"]
-
 trading:
+  quote_currency: USDC
+  symbols: ["BTCUSDC", "ETHUSDC", "BNBUSDC", "SOLUSDC", "XRPUSDC", "ADAUSDC", "DOGEUSDC", "DOTUSDC"]
   live_trading: true
   min_order_size: 10
   max_order_size: 20000
@@ -9662,12 +10040,97 @@ arbitrage:
 
 schedule:
   enabled: true
+  # FIXED: Updated trading_hours to match aws_schedule operation_windows in Singapore time
   trading_hours:
-    - start: 02:00  # UTC - peak volatility
-      end: 05:00
-    - start: 14:00  # UTC - peak volatility  
+    - start: 09:00  # Singapore time (UTC+8) - matches operation_windows
+      end: 12:00
+    - start: 14:00  # Singapore time (UTC+8) - matches operation_windows
       end: 17:00
   check_interval: 300
+
+# PRESERVED EXISTING SECTIONS - NO MODIFICATIONS
+# Only fixing schedule consistency
+
+# NEW: Added for AWS Free Tier schedule management (additions only)
+aws_schedule:
+  daily_run_hours: 6
+  enabled: true
+  operation_windows:
+    - start: "09:00"  # Singapore time (UTC+8) - matches your 02:00 UTC
+      end: "12:00"
+    - start: "14:00"  # Singapore time (UTC+8) - matches your 06:00 UTC  
+      end: "17:00"
+
+# NEW: Added for free tier resource monitoring (additions only)
+free_tier_limits:
+  monthly_hours: 750
+  daily_budget_hours: 6
+  cpu_credits: 144
+  data_transfer_gb: 100
+
+# NEW: Added for Binance API rate limiting (additions only)
+api_limits:
+  requests_per_minute: 1100
+  orders_per_second: 8
+  weight_limit: 1150
+
+# PRESERVE ALL EXISTING COMPATIBILITY SETTINGS
+compatibility:
+  preserve_existing: true
+  legacy_support: true
+  migration_mode: false
+
+# NEW: Added schedule consistency validation (additions only)
+schedule_consistency:
+  enabled: true
+  primary_timezone: "Asia/Singapore"
+  validate_on_startup: true
+  auto_correct_mismatches: true
+
+load_testing:
+  enabled: true
+  traffic_multiplier: 10
+  duration_hours: 24
+  max_concurrent_connections: 1000
+  resource_monitoring_interval: 30
+
+# NEW: Enhanced rate limiter configuration for state persistence
+rate_limiter:
+  state_persistence: true
+  state_file: "rate_limiter_state.json"
+  auto_recovery: true
+  max_retry_attempts: 5
+  recovery_delay: 30
+
+# NEW: Clock skew protection configuration
+clock_skew:
+  auto_sync: true
+  sync_interval: 3600  # 1 hour
+  max_allowed_skew: 5000  # 5 seconds in milliseconds
+  fallback_to_local: true
+
+# NEW: Enhanced monitoring for AWS Free Tier
+aws_enhanced_monitoring:
+  cpu_credit_balance: true
+  network_throughput: true
+  disk_iops: true
+  memory_utilization: true
+  alert_threshold: 80
+
+# NEW: Binance API optimization for USDC pairs
+binance_optimization:
+  usdc_markets: true
+  fee_optimization: true  # Without BNB fee discount
+  recv_window: 5000
+  testnet_first: false
+
+# NEW: Performance optimization for t2.micro
+performance_optimization:
+  max_memory_usage: 85%
+  cpu_throttle_prevention: true
+  background_cleanup: true
+  cache_optimization: true
+  connection_pooling: true
 
 ### [FILE] binance_api/websocket.py
 
