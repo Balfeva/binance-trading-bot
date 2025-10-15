@@ -22,7 +22,7 @@ BinanceBot/
 │   ├── strategy_engine.py
 │   ├── turbo_arbitrage.py
 │   ├── quantum_overlays.py
-│   ├── pair_manager.py
+│   ├── pair_manager.pyimport logging
 │   ├── portfolio_manager.py
 │   ├── type_checker.py
 │   ├── emergency.py
@@ -4762,151 +4762,341 @@ class TypeChecker:
                 raise ValueError(f"Trainer missing required method: {method}")
 
 ### [FILE] core/pair_manager.py
-import time
-import numpy as np
-from custom_types import List, Dict, Tuple
-from custom_collections import defaultdict
+import logging
+from typing import Dict, List, Optional, Any, Set
+from utils.advanced_logger import AdvancedLogger
+from utils.config_loader import ConfigLoader
 
 class PairManager:
-    def __init__(self, client, config):
-        self.client = client
+    """
+    Enhanced pair manager with dynamic bridge currency support
+    Handles USDC trading pairs and symbol validation
+    """
+    
+    def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.candidate_pairs = []
-        self.active_pairs = []
-        self.scores = defaultdict(float)
-        self.pair_metrics = {}
-        self.last_updated = {
-            'rescore': 0,
-            'rescan': 0
+        self.logger = AdvancedLogger(__name__)
+        
+        # === CRITICAL: Use configured bridge currency, not hardcoded USDT ===
+        self.bridge_currency = self.config.get('trading', {}).get('bridge_currency', 'USDC')
+        self.supported_coins = self.config.get('trading', {}).get('supported_coin_list', [])
+        
+        # Initialize symbols
+        self.symbols: List[str] = []
+        self.active_symbols: Set[str] = set()
+        self.symbol_filters: Dict[str, Dict] = {}
+        
+        self._initialize_symbols()
+        self.logger.info(f"PairManager initialized with bridge: {self.bridge_currency}")
+
+    def _initialize_symbols(self):
+        """Initialize trading symbols based on configured coins and bridge currency"""
+        self.symbols = []
+        
+        for coin in self.supported_coins:
+            if coin != self.bridge_currency:
+                symbol = f"{coin}{self.bridge_currency}"
+                self.symbols.append(symbol)
+                
+        self.logger.info(f"Generated {len(self.symbols)} symbols: {self.symbols}")
+
+    def set_active_symbols(self, symbols: List[str]):
+        """Set active trading symbols with validation"""
+        valid_symbols = []
+        
+        for symbol in symbols:
+            if symbol in self.symbols:
+                valid_symbols.append(symbol)
+            else:
+                self.logger.warning(f"Symbol {symbol} not in supported symbols list")
+                
+        self.active_symbols = set(valid_symbols)
+        self.logger.info(f"Set {len(self.active_symbols)} active symbols: {list(self.active_symbols)}")
+
+    def get_all_symbols(self) -> List[str]:
+        """Get all supported symbols"""
+        return self.symbols.copy()
+
+    def get_active_symbols(self) -> List[str]:
+        """Get active trading symbols"""
+        return list(self.active_symbols)
+
+    def is_symbol_supported(self, symbol: str) -> bool:
+        """Check if symbol is supported"""
+        return symbol in self.symbols
+
+    def is_symbol_active(self, symbol: str) -> bool:
+        """Check if symbol is active for trading"""
+        return symbol in self.active_symbols
+
+    def activate_symbol(self, symbol: str) -> bool:
+        """Activate a symbol for trading"""
+        if symbol not in self.symbols:
+            self.logger.warning(f"Cannot activate unsupported symbol: {symbol}")
+            return False
+            
+        self.active_symbols.add(symbol)
+        self.logger.info(f"Activated symbol: {symbol}")
+        return True
+
+    def deactivate_symbol(self, symbol: str) -> bool:
+        """Deactivate a symbol for trading"""
+        if symbol in self.active_symbols:
+            self.active_symbols.remove(symbol)
+            self.logger.info(f"Deactivated symbol: {symbol}")
+            return True
+        return False
+
+    def get_quote_asset(self, symbol: str) -> str:
+        """Get quote asset for symbol"""
+        # For USDC pairs, quote asset is USDC
+        if symbol.endswith(self.bridge_currency):
+            return self.bridge_currency
+            
+        # Fallback: try to extract quote asset
+        for asset in [self.bridge_currency, 'USDT', 'BUSD', 'BTC', 'ETH']:
+            if symbol.endswith(asset):
+                return asset
+                
+        self.logger.warning(f"Could not determine quote asset for {symbol}")
+        return 'UNKNOWN'
+
+    def get_base_asset(self, symbol: str) -> str:
+        """Get base asset for symbol"""
+        quote_asset = self.get_quote_asset(symbol)
+        if quote_asset != 'UNKNOWN':
+            return symbol[:-len(quote_asset)]
+        return 'UNKNOWN'
+
+    def validate_symbol_format(self, symbol: str) -> bool:
+        """Validate symbol format"""
+        if not symbol or len(symbol) < 3:
+            return False
+            
+        # Check if symbol ends with bridge currency
+        if not symbol.endswith(self.bridge_currency):
+            return False
+            
+        base_asset = symbol[:-len(self.bridge_currency)]
+        if not base_asset or base_asset not in self.supported_coins:
+            return False
+            
+        return True
+
+    def get_trading_pairs_by_volume(self, api_client, limit: int = 10) -> List[str]:
+        """Get top trading pairs by volume"""
+        try:
+            # This would typically call Binance API to get 24hr volume
+            # For now, return active symbols sorted by configured priority
+            active_symbols = list(self.active_symbols)
+            
+            # Priority: BTC, ETH, BNB first
+            priority_order = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'DOT']
+            
+            def symbol_priority(symbol):
+                base = self.get_base_asset(symbol)
+                try:
+                    return priority_order.index(base)
+                except ValueError:
+                    return len(priority_order)
+                    
+            active_symbols.sort(key=symbol_priority)
+            return active_symbols[:limit]
+            
+        except Exception as e:
+            self.logger.error(f"Error getting trading pairs by volume: {e}")
+            return list(self.active_symbols)[:limit]
+
+    def update_symbol_filters(self, api_client, symbols: List[str] = None):
+        """Update symbol filters from exchange"""
+        try:
+            symbols_to_update = symbols or self.symbols
+            
+            for symbol in symbols_to_update:
+                try:
+                    symbol_info = api_client.get_symbol_info(symbol)
+                    if symbol_info:
+                        filters = {}
+                        for f in symbol_info['filters']:
+                            filters[f['filterType']] = f
+                        self.symbol_filters[symbol] = filters
+                        
+                except Exception as e:
+                    self.logger.warning(f"Could not get filters for {symbol}: {e}")
+                    
+            self.logger.info(f"Updated filters for {len(self.symbol_filters)} symbols")
+            
+        except Exception as e:
+            self.logger.error(f"Error updating symbol filters: {e}")
+
+    def validate_order_parameters(self, symbol: str, quantity: float, price: float = None) -> Dict[str, Any]:
+        """Validate order parameters against symbol filters"""
+        result = {
+            'valid': True,
+            'errors': [],
+            'adjusted_quantity': quantity,
+            'adjusted_price': price
         }
         
-    async def get_active_pairs(self) -> List[str]:
-        """Main entry point - manages pair lifecycle"""
-        await self._maintain_pair_universe()
-        return self._ensure_minimum_coverage()
-
-    async def _maintain_pair_universe(self):
-        """Orchestrate all pair management tasks"""
-        now = time.time()
-        
-        # Full market scan
-        if now - self.last_updated['rescan'] > self.config['pair_selection']['full_rescan_interval']:
-            await self._full_market_scan()
-            self.last_updated['rescan'] = now
+        if symbol not in self.symbol_filters:
+            result['errors'].append(f"No filters available for {symbol}")
+            result['valid'] = False
+            return result
             
-        # Regular scoring updates
-        if now - self.last_updated['rescore'] > self.config['pair_selection']['rescore_interval']:
-            await self._update_pair_scores()
-            self._optimize_active_pairs()
-            self.last_updated['rescore'] = now
-
-    async def _full_market_scan(self):
-        """Identify all potential candidate pairs"""
-        all_pairs = await self.client.get_exchange_info()
-        self.candidate_pairs = [
-            s['symbol'] for s in sorted(
-                all_pairs['symbols'],
-                key=lambda x: float(x['quoteVolume']),
-                reverse=True
-            )[:150]  # Top 150 by volume
-            if (s['quoteAsset'] == 'USDC' and 
-                s['status'] == 'TRADING')
-        ]
-
-    async def _update_pair_scores(self):
-        """Score top candidates from the pool"""
-        scored_pairs = []
-        for symbol in self.candidate_pairs[:self.config['pair_selection']['candidate_pool_size']]:
-            try:
-                book = await self.client.get_order_book(symbol, limit=5)
-                self.pair_metrics[symbol] = {
-                    'volatility': self._calculate_volatility(symbol),
-                    'spread': float(book['asks'][0][0]) - float(book['bids'][0][0]),
-                    'liquidity': sum(float(b[1]) for b in book['bids'][:3]),
-                    'last_updated': time.time()
-                }
-                scored_pairs.append((symbol, self._calculate_score(symbol)))
-            except Exception as e:
-                print(f"Failed to score {symbol}: {str(e)}")
+        filters = self.symbol_filters[symbol]
         
-        # Update scores
-        for symbol, score in scored_pairs:
-            self.scores[symbol] = score
-
-    def _calculate_score(self, symbol: str) -> float:
-        """Dynamic scoring based on current metrics"""
-        metrics = self.pair_metrics.get(symbol, {})
-        return (
-            0.5 * metrics.get('volatility', 0) +
-            0.3 * (1 / max(0.0001, metrics.get('spread', 0.0001))) +
-            0.2 * metrics.get('liquidity', 0)
-        )
-
-    def _optimize_active_pairs(self):
-        """Smart pair rotation with hysteresis"""
-        now = time.time()
-        candidate_symbols = [
-            sym for sym in self.candidate_pairs 
-            if sym in self.scores
-        ][:self.config['pair_selection']['candidate_pool_size']]
-        
-        # Sort candidates by score
-        candidates = sorted(
-            [(sym, self.scores[sym]) for sym in candidate_symbols],
-            key=lambda x: -x[1]
-        )
-        
-        # Current active pairs with tenure
-        active_with_tenure = [
-            (sym, now - self.pair_metrics.get(sym, {}).get('last_updated', now))
-            for sym in self.active_pairs
-        ]
-        
-        # Optimize pair selection
-        new_active_pairs = []
-        for symbol, _ in candidates:
-            if len(new_active_pairs) >= self.config['performance']['max_active_pairs']:
-                break
+        # Validate LOT_SIZE filter
+        if 'LOT_SIZE' in filters:
+            lot_filter = filters['LOT_SIZE']
+            min_qty = float(lot_filter['minQty'])
+            max_qty = float(lot_filter['maxQty'])
+            step_size = float(lot_filter['stepSize'])
+            
+            if quantity < min_qty:
+                result['errors'].append(f"Quantity {quantity} below minimum {min_qty}")
+                result['valid'] = False
+            elif quantity > max_qty:
+                result['errors'].append(f"Quantity {quantity} above maximum {max_qty}")
+                result['valid'] = False
                 
-            # Keep good performers that meet minimum tenure
-            if symbol in self.active_pairs:
-                tenure = now - self.pair_metrics.get(symbol, {}).get('last_updated', now)
-                if tenure > self.config['pair_selection']['min_time_to_keep_pair']:
-                    new_active_pairs.append(symbol)
+            # Adjust to step size
+            if step_size > 0:
+                adjusted = round(quantity / step_size) * step_size
+                result['adjusted_quantity'] = adjusted
+                
+        # Validate PRICE_FILTER if price is provided
+        if price is not None and 'PRICE_FILTER' in filters:
+            price_filter = filters['PRICE_FILTER']
+            min_price = float(price_filter['minPrice'])
+            max_price = float(price_filter['maxPrice'])
+            tick_size = float(price_filter['tickSize'])
             
-            # Add new candidates that beat threshold
-            elif self._should_add_pair(symbol, new_active_pairs):
-                new_active_pairs.append(symbol)
-        
-        self.active_pairs = new_active_pairs
+            if price < min_price:
+                result['errors'].append(f"Price {price} below minimum {min_price}")
+                result['valid'] = False
+            elif price > max_price:
+                result['errors'].append(f"Price {price} above maximum {max_price}")
+                result['valid'] = False
+                
+            # Adjust to tick size
+            if tick_size > 0:
+                adjusted = round(price / tick_size) * tick_size
+                result['adjusted_price'] = adjusted
+                
+        return result
 
-    def _should_add_pair(self, symbol: str, current_active: List[str]) -> bool:
-        """Hysteresis-based pair addition logic"""
-        if len(current_active) < 3:  # Always maintain minimum
-            return True
+    def get_symbol_statistics(self, api_client, symbols: List[str] = None) -> Dict[str, Any]:
+        """Get statistics for symbols"""
+        symbols_to_check = symbols or self.active_symbols
+        statistics = {}
+        
+        try:
+            for symbol in symbols_to_check:
+                try:
+                    ticker = api_client.get_24hr_ticker(symbol)
+                    statistics[symbol] = {
+                        'price_change': float(ticker.get('priceChange', 0)),
+                        'price_change_percent': float(ticker.get('priceChangePercent', 0)),
+                        'volume': float(ticker.get('volume', 0)),
+                        'high_price': float(ticker.get('highPrice', 0)),
+                        'low_price': float(ticker.get('lowPrice', 0)),
+                        'last_price': float(ticker.get('lastPrice', 0))
+                    }
+                except Exception as e:
+                    self.logger.warning(f"Could not get statistics for {symbol}: {e}")
+                    
+            self.logger.info(f"Retrieved statistics for {len(statistics)} symbols")
+            return statistics
             
-        worst_active = min(
-            current_active,
-            key=lambda x: self.scores.get(x, 0)
-        )
-        
-        return (self.scores[symbol] > 
-                self.scores[worst_active] * 
-                self.config['pair_selection']['score_hysteresis'])
+        except Exception as e:
+            self.logger.error(f"Error getting symbol statistics: {e}")
+            return {}
 
-    def _ensure_minimum_coverage(self) -> List[str]:
-        """Guarantee enough pairs for target trade frequency"""
-        min_pairs = max(
-            3,
-            int(self.config['pair_selection']['min_daily_trades'] / 16)  # ~2 trades/pair/day
-        )
+    def suggest_symbols_for_trading(self, api_client, max_symbols: int = 5) -> List[str]:
+        """Suggest symbols for trading based on volume and volatility"""
+        try:
+            statistics = self.get_symbol_statistics(api_client, self.active_symbols)
+            
+            # Score symbols based on volume and volatility
+            scored_symbols = []
+            for symbol, stats in statistics.items():
+                volume_score = stats['volume']
+                volatility_score = abs(stats['price_change_percent'])
+                total_score = volume_score * (1 + volatility_score * 0.1)  # Prefer volatile symbols
+                
+                scored_symbols.append((symbol, total_score))
+                
+            # Sort by score descending
+            scored_symbols.sort(key=lambda x: x[1], reverse=True)
+            
+            suggested = [symbol for symbol, score in scored_symbols[:max_symbols]]
+            self.logger.info(f"Suggested symbols for trading: {suggested}")
+            return suggested
+            
+        except Exception as e:
+            self.logger.error(f"Error suggesting symbols: {e}")
+            return list(self.active_symbols)[:max_symbols]
+
+    def get_correlation_matrix(self, api_client, symbols: List[str] = None, 
+                             period: str = '1d', limit: int = 100) -> Dict[str, Dict[str, float]]:
+        """Calculate correlation matrix between symbols"""
+        symbols_to_analyze = symbols or self.active_symbols
+        correlation_matrix = {}
         
-        if len(self.active_pairs) < min_pairs:
-            return self.active_pairs + [
-                sym for sym in self.candidate_pairs 
-                if sym not in self.active_pairs
-            ][:min_pairs - len(self.active_pairs)]
-        return self.active_pairs
+        try:
+            # This would typically involve fetching historical data and calculating correlations
+            # For now, return a simple implementation
+            prices = {}
+            
+            for symbol in symbols_to_analyze:
+                try:
+                    klines = api_client.get_klines(symbol, period, limit)
+                    close_prices = [float(k[4]) for k in klines]
+                    prices[symbol] = close_prices
+                except Exception as e:
+                    self.logger.warning(f"Could not get prices for {symbol}: {e}")
+                    
+            # Calculate correlations
+            for sym1 in prices:
+                correlation_matrix[sym1] = {}
+                for sym2 in prices:
+                    if len(prices[sym1]) == len(prices[sym2]) and len(prices[sym1]) > 1:
+                        corr = self._calculate_correlation(prices[sym1], prices[sym2])
+                        correlation_matrix[sym1][sym2] = corr
+                    else:
+                        correlation_matrix[sym1][sym2] = 0.0
+                        
+            self.logger.info(f"Calculated correlation matrix for {len(correlation_matrix)} symbols")
+            return correlation_matrix
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating correlation matrix: {e}")
+            return {}
+
+    def _calculate_correlation(self, prices1: List[float], prices2: List[float]) -> float:
+        """Calculate correlation between two price series"""
+        if len(prices1) != len(prices2) or len(prices1) < 2:
+            return 0.0
+            
+        try:
+            returns1 = [prices1[i] / prices1[i-1] - 1 for i in range(1, len(prices1))]
+            returns2 = [prices2[i] / prices2[i-1] - 1 for i in range(1, len(prices2))]
+            
+            mean1 = sum(returns1) / len(returns1)
+            mean2 = sum(returns2) / len(returns2)
+            
+            covariance = sum((r1 - mean1) * (r2 - mean2) for r1, r2 in zip(returns1, returns2))
+            variance1 = sum((r1 - mean1) ** 2 for r1 in returns1)
+            variance2 = sum((r2 - mean2) ** 2 for r2 in returns2)
+            
+            if variance1 == 0 or variance2 == 0:
+                return 0.0
+                
+            correlation = covariance / (variance1 ** 0.5 * variance2 ** 0.5)
+            return correlation
+            
+        except:
+            return 0.0
 
 
 ### [FILE] optimizations/vectorized_math.py
@@ -5946,73 +6136,290 @@ class MarketAdaptiveSleep:
         self.volatility = 0.9 * self.volatility + 0.1 * new_value
 
 ### [FILE] monitoring/free_tier_guard.py
-import psutil
-import gc
-import asyncio
-from typing import Optional
+import time
 import logging
-
-logger = logging.getLogger('free_tier_guard')
+import threading
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
+import psutil
+import boto3
+from utils.advanced_logger import AdvancedLogger
 
 class FreeTierGuard:
-    def __init__(self, config):
-        # Adjusted limits for 8 pairs
-        self.memory_limit = 800 * 1024 * 1024  # 800MB (more conservative)
-        self.cpu_limit = 0.7  # 70% CPU max
-        self.symbol_count = len(config.get('symbols', []))
-        self._actions = []
-        
-    async def monitor(self, interval: int = 30):  # More frequent monitoring
-        """Enhanced monitoring for 8 pairs"""
-        while True:
-            try:
-                mem = psutil.virtual_memory()
-                cpu = psutil.cpu_percent(interval=1) / 100
-                
-                # Dynamic thresholds based on symbol count
-                memory_threshold = self.memory_limit * (0.9 if self.symbol_count > 6 else 0.8)
-                cpu_threshold = self.cpu_limit * (0.9 if self.symbol_count > 6 else 0.8)
-                
-                if mem.used > memory_threshold or cpu > cpu_threshold:
-                    reduction_level = 1
-                    if mem.used > self.memory_limit or cpu > self.cpu_limit:
-                        reduction_level = 2
-                        
-                    await self.reduce_workload(
-                        memory_pressure=mem.used > memory_threshold,
-                        cpu_pressure=cpu > cpu_threshold,
-                        level=reduction_level
-                    )
-                    
-                await asyncio.sleep(interval)
-                
-            except Exception as e:
-                logger.error(f"Monitoring error: {e}")
-                await asyncio.sleep(60)
+    """
+    Enhanced free tier guard for AWS free tier compliance
+    Ensures 6-hour daily operation and resource monitoring
+    """
     
-    async def reduce_workload(self, memory_pressure: bool, cpu_pressure: bool, level: int = 1):
-        """Workload reduction optimized for 8 pairs"""
-        logger.warning(f"🔄 Resource pressure detected. Level {level} reduction.")
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.logger = AdvancedLogger(__name__)
         
-        # Level 1: Mild reduction (6 pairs)
-        if level == 1:
-            actions = [
-                lambda: logger.info("Reducing to 6 active pairs"),
-                lambda: gc.collect(),
-            ]
-        # Level 2: Aggressive reduction (4 pairs)  
-        else:
-            actions = [
-                lambda: logger.info("Reducing to 4 active pairs"),
-                lambda: gc.collect(),
-                lambda: logger.info("Increasing polling interval"),
-            ]
+        # Free tier configuration
+        free_tier_config = config.get('free_tier', {})
+        self.max_daily_hours = free_tier_config.get('max_daily_hours', 6)
+        self.start_hour = free_tier_config.get('start_hour', 0)  # UTC
+        self.stop_hour = free_tier_config.get('stop_hour', 6)    # UTC
+        self.aws_region = free_tier_config.get('aws_region', 'ap-southeast-1')
+        
+        # Runtime tracking
+        self.start_time = time.time()
+        self.daily_start_time = self._get_daily_start_time()
+        self.max_runtime_seconds = self.max_daily_hours * 3600
+        self.total_runtime_today = 0
+        self.is_monitoring = False
+        self.monitor_thread = None
+        
+        # Resource monitoring
+        self.max_cpu_usage = 80.0  # Percentage
+        self.max_memory_usage = 85.0  # Percentage
+        self.max_disk_usage = 90.0  # Percentage
+        
+        # AWS client (optional)
+        self.aws_client = None
+        self.initialize_aws_client()
+        
+        self.logger.info(f"FreeTierGuard initialized: {self.max_daily_hours}h daily from {self.start_hour}:00-{self.stop_hour}:00 UTC")
+
+    def _get_daily_start_time(self) -> float:
+        """Calculate today's start time in UTC"""
+        now = datetime.utcnow()
+        today_start = datetime(now.year, now.month, now.day, self.start_hour)
+        return time.mktime(today_start.timetuple())
+
+    def initialize_aws_client(self):
+        """Initialize AWS client for monitoring"""
+        try:
+            aws_config = self.config.get('aws', {})
+            access_key = aws_config.get('access_key')
+            secret_key = aws_config.get('secret_key')
             
-        for action in actions:
+            if access_key and secret_key:
+                self.aws_client = boto3.Session(
+                    aws_access_key_id=access_key,
+                    aws_secret_access_key=secret_key,
+                    region_name=self.aws_region
+                )
+                self.logger.info("AWS client initialized for free tier monitoring")
+            else:
+                self.logger.info("AWS credentials not provided, using basic monitoring")
+                
+        except Exception as e:
+            self.logger.warning(f"Could not initialize AWS client: {e}")
+
+    def should_continue_running(self) -> bool:
+        """
+        Check if bot should continue running based on free tier limits
+        Returns False if daily limits are exceeded or outside allowed hours
+        """
+        current_time = time.time()
+        
+        # Check if we're in the allowed time window
+        if not self._is_in_allowed_hours():
+            self.logger.warning("Outside allowed operating hours")
+            return False
+            
+        # Check daily runtime limit
+        elapsed_today = current_time - self.daily_start_time
+        self.total_runtime_today = elapsed_today
+        
+        if elapsed_today > self.max_runtime_seconds:
+            self.logger.warning(f"Daily runtime limit exceeded: {elapsed_today/3600:.1f}h > {self.max_daily_hours}h")
+            return False
+            
+        # Check system resource limits
+        if not self._check_system_resources():
+            self.logger.warning("System resource limits exceeded")
+            return False
+            
+        return True
+
+    def _is_in_allowed_hours(self) -> bool:
+        """Check if current time is within allowed operating hours"""
+        current_utc = datetime.utcnow()
+        current_hour = current_utc.hour
+        
+        # Handle overnight window (e.g., 00:00-06:00)
+        if self.start_hour < self.stop_hour:
+            return self.start_hour <= current_hour < self.stop_hour
+        else:
+            # Handle window crossing midnight (e.g., 22:00-04:00)
+            return current_hour >= self.start_hour or current_hour < self.stop_hour
+
+    def _check_system_resources(self) -> bool:
+        """Check system resources are within free tier limits"""
+        try:
+            # CPU usage
+            cpu_percent = psutil.cpu_percent(interval=1)
+            if cpu_percent > self.max_cpu_usage:
+                self.logger.warning(f"CPU usage too high: {cpu_percent}%")
+                return False
+                
+            # Memory usage
+            memory = psutil.virtual_memory()
+            if memory.percent > self.max_memory_usage:
+                self.logger.warning(f"Memory usage too high: {memory.percent}%")
+                return False
+                
+            # Disk usage
+            disk = psutil.disk_usage('/')
+            if disk.percent > self.max_disk_usage:
+                self.logger.warning(f"Disk usage too high: {disk.percent}%")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error checking system resources: {e}")
+            return True  # Don't stop bot on monitoring errors
+
+    def get_remaining_time(self) -> float:
+        """Get remaining runtime in seconds for today"""
+        if not self._is_in_allowed_hours():
+            return 0
+            
+        current_time = time.time()
+        elapsed_today = current_time - self.daily_start_time
+        remaining = max(0, self.max_runtime_seconds - elapsed_today)
+        return remaining
+
+    def get_usage_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive usage statistics"""
+        current_time = time.time()
+        elapsed_total = current_time - self.start_time
+        elapsed_today = current_time - self.daily_start_time
+        
+        # System resources
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        stats = {
+            'runtime': {
+                'total_seconds': elapsed_total,
+                'total_hours': elapsed_total / 3600,
+                'today_seconds': min(elapsed_today, self.max_runtime_seconds),
+                'today_hours': min(elapsed_today / 3600, self.max_daily_hours),
+                'remaining_seconds': self.get_remaining_time(),
+                'remaining_hours': self.get_remaining_time() / 3600,
+                'daily_limit_hours': self.max_daily_hours
+            },
+            'system': {
+                'cpu_percent': cpu_percent,
+                'memory_percent': memory.percent,
+                'disk_percent': disk.percent,
+                'memory_used_gb': memory.used / (1024**3),
+                'disk_used_gb': disk.used / (1024**3)
+            },
+            'status': {
+                'in_allowed_hours': self._is_in_allowed_hours(),
+                'within_daily_limit': elapsed_today <= self.max_runtime_seconds,
+                'within_resource_limits': self._check_system_resources()
+            }
+        }
+        
+        return stats
+
+    def start_monitoring(self, interval: int = 60):
+        """Start background monitoring"""
+        if self.is_monitoring:
+            return
+            
+        self.is_monitoring = True
+        self.monitor_thread = threading.Thread(
+            target=self._monitor_loop,
+            args=(interval,),
+            daemon=True
+        )
+        self.monitor_thread.start()
+        self.logger.info(f"Started free tier monitoring with {interval}s interval")
+
+    def stop_monitoring(self):
+        """Stop background monitoring"""
+        self.is_monitoring = False
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=5)
+        self.logger.info("Stopped free tier monitoring")
+
+    def _monitor_loop(self, interval: int):
+        """Background monitoring loop"""
+        while self.is_monitoring:
             try:
-                action()
+                stats = self.get_usage_statistics()
+                
+                # Log warning if approaching limits
+                remaining_hours = stats['runtime']['remaining_hours']
+                if remaining_hours < 1:
+                    self.logger.warning(f"Less than 1 hour remaining: {remaining_hours:.1f}h")
+                elif remaining_hours < 0.5:
+                    self.logger.warning(f"Less than 30 minutes remaining: {remaining_hours*60:.0f}m")
+                    
+                # Log resource warnings
+                if stats['system']['cpu_percent'] > 70:
+                    self.logger.warning(f"High CPU usage: {stats['system']['cpu_percent']}%")
+                if stats['system']['memory_percent'] > 75:
+                    self.logger.warning(f"High memory usage: {stats['system']['memory_percent']}%")
+                    
+                time.sleep(interval)
+                
             except Exception as e:
-                logger.error(f"Reduction action failed: {e}")
+                self.logger.error(f"Error in monitoring loop: {e}")
+                time.sleep(interval)
+
+    def get_daily_schedule(self) -> Dict[str, Any]:
+        """Get today's operating schedule"""
+        now = datetime.utcnow()
+        today_start = datetime(now.year, now.month, now.day, self.start_hour)
+        
+        if self.start_hour < self.stop_hour:
+            today_end = datetime(now.year, now.month, now.day, self.stop_hour)
+        else:
+            # Schedule crosses midnight
+            today_end = datetime(now.year, now.month, now.day, self.stop_hour) + timedelta(days=1)
+            
+        return {
+            'start_time': today_start,
+            'end_time': today_end,
+            'duration_hours': self.max_daily_hours,
+            'current_time': now,
+            'is_active': self._is_in_allowed_hours()
+        }
+
+    def emergency_shutdown_check(self) -> bool:
+        """
+        Check if emergency shutdown is required
+        Returns True if immediate shutdown is needed
+        """
+        # Check if way over daily limit (safety margin)
+        current_time = time.time()
+        elapsed_today = current_time - self.daily_start_time
+        if elapsed_today > self.max_runtime_seconds * 1.1:  # 10% over limit
+            self.logger.error(f"Emergency shutdown: Exceeded daily limit by 10%")
+            return True
+            
+        # Check if critical system resources
+        try:
+            if psutil.cpu_percent(interval=0.5) > 95:
+                self.logger.error("Emergency shutdown: CPU usage critical")
+                return True
+                
+            if psutil.virtual_memory().percent > 95:
+                self.logger.error("Emergency shutdown: Memory usage critical")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Error in emergency shutdown check: {e}")
+            
+        return False
+
+    def __enter__(self):
+        """Context manager entry"""
+        self.start_monitoring()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        self.stop_monitoring()
 
 ### [FILE] run.sh
 
@@ -9422,176 +9829,472 @@ class QuantumOverlay:
 ### [FILE] core/portfolio_manager.py
 
 import logging
-from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
-from typing import Dict, Any
 import time
+from typing import Dict, List, Optional, Any, Tuple
+from decimal import Decimal, ROUND_DOWN
 import numpy as np
+from utils.advanced_logger import AdvancedLogger
+from binance_api.client import BinanceAPIClient
 
-logger = logging.getLogger('portfolio_manager')
-
-class PrecisionPortfolioManager:
-    """💀 ULTIMATE: Fixed floating point precision with Decimal arithmetic"""
+class PortfolioManager:
+    """
+    Enhanced portfolio manager for USDC-based trading
+    Comprehensive risk management and position tracking
+    """
     
-    def __init__(self, client, config: Dict[str, Any]):
-        self.client = client
+    def __init__(self, api_client: BinanceAPIClient, config: Dict[str, Any]):
+        self.api_client = api_client
         self.config = config
-        self.max_allocation = Decimal(str(config['trading']['position_size_percent']))
-        self.max_position_size = Decimal(str(config['trading']['max_position_size']))
-        self.min_order_size = Decimal(str(config['trading']['min_order_size']))
+        self.logger = AdvancedLogger(__name__)
         
-        # Precision settings
-        self.quantity_precision = Decimal('0.000001')  # 6 decimal places for quantities
-        self.price_precision = Decimal('0.00000001')   # 8 decimal places for prices
-        self.percentage_precision = Decimal('0.0001')  # 4 decimal places for percentages
+        # === CRITICAL: Use configured bridge currency ===
+        trading_config = config.get('trading', {})
+        self.bridge_currency = trading_config.get('bridge_currency', 'USDC')
+        self.max_position_size = trading_config.get('max_position_size', 100.0)
+        self.min_trade_amount = trading_config.get('min_trade_amount', 10.0)
+        self.max_drawdown = trading_config.get('max_drawdown', 0.05)
         
-    async def get_balance(self, asset: str = "USDC") -> Decimal:
-        """Get balance with precise Decimal arithmetic"""
+        # Risk management
+        risk_config = config.get('risk', {})
+        self.max_daily_loss = risk_config.get('max_daily_loss', 0.1)
+        self.max_position_risk = risk_config.get('max_position_risk', 0.02)
+        
+        # Portfolio state
+        self.positions: Dict[str, Dict] = {}
+        self.balances: Dict[str, Dict] = {}
+        self.cash_balance = 0.0
+        self.initial_balance = 0.0
+        self.current_balance = 0.0
+        self.daily_pnl = 0.0
+        self.total_pnl = 0.0
+        self.last_update = 0
+        self.update_interval = 30  # seconds
+        
+        # Performance tracking
+        self.performance_history = []
+        self.trade_history = []
+        
+        self.logger.info("PortfolioManager initialized with USDC base currency")
+
+    def update_balances(self, force: bool = False) -> bool:
+        """
+        Update portfolio balances from Binance
+        Returns True if successful
+        """
+        current_time = time.time()
+        if not force and current_time - self.last_update < self.update_interval:
+            return True
+            
         try:
-            if self.config['trading'].get('dry_run', True):
-                # Simulation mode - use precise decimal
-                return Decimal('1000.0')  # $1000 paper trading balance
-            else:
-                # Live trading - get actual balance
-                balances = await self.client.get_account_balances()
-                if not balances:
-                    logger.error("No balance data returned")
-                    return Decimal('0.0')
+            # Get account info from Binance
+            account_info = self.api_client.get_account_info()
+            self.last_update = current_time
+            
+            # Clear previous balances
+            self.balances = {}
+            self.cash_balance = 0.0
+            
+            # Process balances
+            for asset_info in account_info['balances']:
+                asset = asset_info['asset']
+                free = float(asset_info['free'])
+                locked = float(asset_info['locked'])
+                total = free + locked
+                
+                self.balances[asset] = {
+                    'free': free,
+                    'locked': locked,
+                    'total': total
+                }
+                
+                # Track USDC cash balance separately
+                if asset == self.bridge_currency:
+                    self.cash_balance = free
                     
-                for balance in balances:
-                    if balance['asset'] == asset:
-                        free_balance = Decimal(str(balance.get('free', 0)))
-                        logger.info(f"💰 {asset} Balance: {free_balance}")
-                        return free_balance.quantize(self.price_precision)
-                
-                logger.warning(f"Asset {asset} not found in balances")
-                return Decimal('0.0')
-        except Exception as e:
-            logger.error(f"Balance check failed: {e}")
-            return Decimal('0.0')
-
-    def calculate_position_size(self, symbol_price: Decimal, current_balance: Decimal) -> Decimal:
-        """Calculate position size with precise Decimal arithmetic"""
-        try:
-            if symbol_price <= Decimal('0'):
-                logger.error(f"Invalid symbol price: {symbol_price}")
-                return Decimal('0.0')
-                
-            # Convert percentage to decimal and calculate allocation
-            allocation_percent = self.max_allocation / Decimal('100.0')
-            allocation = current_balance * allocation_percent
+            # Update positions
+            self._update_positions()
             
-            # Calculate size in units with proper rounding
-            size = (allocation / symbol_price).quantize(self.quantity_precision, ROUND_HALF_UP)
+            # Update portfolio value
+            self._update_portfolio_value()
             
-            # Apply maximum position size limit
-            max_size_units = (self.max_position_size / symbol_price).quantize(self.quantity_precision, ROUND_HALF_UP)
-            
-            final_size = min(size, max_size_units)
-            
-            # Ensure minimum order size
-            order_value = final_size * symbol_price
-            
-            if order_value < self.min_order_size:
-                logger.warning(f"Order value ${order_value:.2f} below minimum ${self.min_order_size}")
-                return Decimal('0.0')
-                
-            logger.info(f"📊 Position size: ${allocation:.2f} -> {final_size:.6f} units (value: ${order_value:.2f})")
-            
-            return final_size
-            
-        except (InvalidOperation, ValueError) as e:
-            logger.error(f"Position calculation failed: {e}")
-            return Decimal('0.0')
-
-    async def validate_order(self, symbol: str, quantity: Decimal, price: Decimal) -> bool:
-        """Validate order parameters with precise Decimal checking"""
-        try:
-            if quantity <= Decimal('0') or price <= Decimal('0'):
-                logger.error(f"Invalid order parameters: qty={quantity}, price={price}")
-                return False
-                
-            # Check minimum order size with precise comparison
-            order_value = quantity * price
-            
-            if order_value < self.min_order_size:
-                logger.warning(f"Order value ${order_value:.2f} below minimum ${self.min_order_size}")
-                return False
-                
-            # Check balance sufficiency (leave 5% for fees)
-            required_balance = order_value * Decimal('1.05')
-            available_balance = await self.get_balance("USDC")
-            
-            if required_balance > available_balance:
-                logger.warning(f"Insufficient balance: ${required_balance:.2f} required, ${available_balance:.2f} available")
-                return False
-                
-            # Check if symbol is valid for trading
-            if not await self._validate_symbol(symbol):
-                logger.warning(f"Symbol {symbol} not valid for trading")
-                return False
-                
+            self.logger.debug(f"Balances updated - {self.bridge_currency}: {self.cash_balance:.2f}")
             return True
             
         except Exception as e:
-            logger.error(f"Order validation failed: {e}")
+            self.logger.error(f"Failed to update balances: {e}")
             return False
 
-    async def _validate_symbol(self, symbol: str) -> bool:
-        """Validate if symbol can be traded"""
-        try:
-            # Simple validation - check if we can get order book
-            order_book = await self.client.get_order_book(symbol, 1)
-            return order_book is not None and 'bids' in order_book and 'asks' in order_book
-        except:
-            return False
-
-    def calculate_risk(self, entry_price: Decimal, stop_loss: Decimal, quantity: Decimal) -> Dict[str, Decimal]:
-        """Calculate trade risk metrics with precise Decimal arithmetic"""
-        try:
-            if entry_price <= Decimal('0') or quantity <= Decimal('0'):
-                return {
-                    'risk_per_trade': Decimal('0.0'), 
-                    'risk_reward_ratio': Decimal('0.0'), 
-                    'position_value': Decimal('0.0')
+    def _update_positions(self):
+        """Update positions from balances"""
+        self.positions = {}
+        
+        for asset, balance_info in self.balances.items():
+            if asset != self.bridge_currency and balance_info['total'] > 0:
+                symbol = f"{asset}{self.bridge_currency}"
+                self.positions[symbol] = {
+                    'asset': asset,
+                    'quantity': balance_info['total'],
+                    'symbol': symbol,
+                    'current_value': 0.0,
+                    'unrealized_pnl': 0.0
                 }
+
+    def _update_portfolio_value(self):
+        """Update total portfolio value"""
+        try:
+            total_value = self.cash_balance
+            
+            # Add value of all positions
+            for symbol, position in self.positions.items():
+                try:
+                    price_data = self.api_client.get_symbol_price(symbol)
+                    current_price = float(price_data['price'])
+                    position_value = position['quantity'] * current_price
+                    position['current_value'] = position_value
+                    position['current_price'] = current_price
+                    total_value += position_value
+                    
+                except Exception as e:
+                    self.logger.warning(f"Could not get price for {symbol}: {e}")
+                    
+            self.current_balance = total_value
+            
+            # Initialize initial balance if not set
+            if self.initial_balance == 0:
+                self.initial_balance = total_value
                 
-            risk_per_share = abs(entry_price - stop_loss)
-            total_risk = risk_per_share * quantity
-            position_value = entry_price * quantity
+            # Update PnL
+            self.total_pnl = total_value - self.initial_balance
             
-            # Simple risk-reward ratio (1:2 by default)
-            potential_profit = position_value * Decimal('0.02')  # 2% target
-            risk_reward_ratio = (potential_profit / total_risk).quantize(self.percentage_precision) if total_risk > Decimal('0') else Decimal('0.0')
+            # Record performance
+            self.performance_history.append({
+                'timestamp': time.time(),
+                'portfolio_value': total_value,
+                'cash_balance': self.cash_balance,
+                'positions_value': total_value - self.cash_balance,
+                'total_pnl': self.total_pnl
+            })
             
-            # Cap at 5:1
-            capped_ratio = min(risk_reward_ratio, Decimal('5.0'))
-            
-            return {
-                'risk_per_trade': total_risk.quantize(self.price_precision),
-                'risk_reward_ratio': capped_ratio,
-                'position_value': position_value.quantize(self.price_precision)
-            }
+            # Keep only last 1000 records
+            if len(self.performance_history) > 1000:
+                self.performance_history.pop(0)
+                
         except Exception as e:
-            logger.error(f"Risk calculation failed: {e}")
-            return {
-                'risk_per_trade': Decimal('0.0'), 
-                'risk_reward_ratio': Decimal('0.0'), 
-                'position_value': Decimal('0.0')
-            }
+            self.logger.error(f"Error updating portfolio value: {e}")
 
-    def get_portfolio_summary(self) -> Dict[str, Any]:
-        """Get current portfolio summary with precise values"""
-        return {
-            'max_allocation_percent': float(self.max_allocation),
-            'max_position_size': float(self.max_position_size),
-            'min_order_size': float(self.min_order_size),
-            'trading_fee': self.config['trading'].get('fee', 0.001),
-            'quantity_precision': float(self.quantity_precision),
-            'price_precision': float(self.price_precision)
+    def get_total_value(self) -> float:
+        """Get total portfolio value in USDC"""
+        if time.time() - self.last_update > self.update_interval:
+            self.update_balances(force=True)
+        return self.current_balance
+
+    def get_cash_balance(self) -> float:
+        """Get available USDC balance"""
+        return self.cash_balance
+
+    def get_position_size(self, symbol: str) -> float:
+        """Get current position size for symbol"""
+        position = self.positions.get(symbol)
+        return position['current_value'] if position else 0.0
+
+    def calculate_position_size(self, symbol: str, risk_per_trade: float = None) -> float:
+        """
+        Calculate appropriate position size based on risk management
+        """
+        if risk_per_trade is None:
+            risk_per_trade = self.max_position_risk
+            
+        # Update balances if stale
+        if time.time() - self.last_update > self.update_interval:
+            self.update_balances()
+            
+        # Calculate based on portfolio value and risk
+        portfolio_value = self.get_total_value()
+        risk_amount = portfolio_value * risk_per_trade
+        
+        # Apply position size limits
+        position_size = min(risk_amount, self.max_position_size)
+        position_size = max(position_size, self.min_trade_amount)
+        
+        # Ensure we have enough cash
+        available_cash = self.get_cash_balance()
+        position_size = min(position_size, available_cash * 0.95)  # Leave 5% buffer
+        
+        self.logger.debug(f"Calculated position size for {symbol}: {position_size:.2f} {self.bridge_currency}")
+        return position_size
+
+    def can_open_position(self, symbol: str, amount: float) -> Tuple[bool, str]:
+        """
+        Check if a new position can be opened
+        Returns (can_open, reason)
+        """
+        # Check minimum trade amount
+        if amount < self.min_trade_amount:
+            return False, f"Amount below minimum {self.min_trade_amount}"
+            
+        # Check maximum position size
+        if amount > self.max_position_size:
+            return False, f"Amount exceeds maximum position size {self.max_position_size}"
+            
+        # Check available cash
+        if amount > self.cash_balance * 0.95:  # 5% buffer
+            return False, "Insufficient cash balance"
+            
+        # Check daily loss limit
+        if self.daily_pnl < -self.initial_balance * self.max_daily_loss:
+            return False, "Daily loss limit exceeded"
+            
+        # Check if symbol already has position
+        current_position = self.get_position_size(symbol)
+        if current_position > 0:
+            return False, f"Position already exists for {symbol}"
+            
+        return True, "OK"
+
+    def record_trade(self, symbol: str, side: str, quantity: float, 
+                    price: float, fee: float = 0.0):
+        """
+        Record a trade in portfolio history
+        """
+        trade_value = quantity * price
+        trade_record = {
+            'timestamp': time.time(),
+            'symbol': symbol,
+            'side': side,
+            'quantity': quantity,
+            'price': price,
+            'value': trade_value,
+            'fee': fee,
+            'portfolio_value': self.get_total_value()
         }
+        
+        self.trade_history.append(trade_record)
+        
+        # Keep only last 500 trades
+        if len(self.trade_history) > 500:
+            self.trade_history.pop(0)
+            
+        self.logger.info(f"Recorded trade: {side} {quantity} {symbol} at {price}")
 
-# Backward compatibility
-PortfolioManager = PrecisionPortfolioManager
+    def get_portfolio_allocation(self) -> Dict[str, float]:
+        """Get current portfolio allocation by asset"""
+        total_value = self.get_total_value()
+        if total_value == 0:
+            return {}
+            
+        allocation = {}
+        
+        # Cash allocation
+        allocation[self.bridge_currency] = self.cash_balance / total_value
+        
+        # Position allocations
+        for symbol, position in self.positions.items():
+            allocation[symbol] = position['current_value'] / total_value
+            
+        return allocation
+
+    def get_risk_metrics(self) -> Dict[str, Any]:
+        """Calculate portfolio risk metrics"""
+        total_value = self.get_total_value()
+        
+        # Concentration risk (Herfindahl index)
+        allocation = self.get_portfolio_allocation()
+        concentration = sum(weight ** 2 for weight in allocation.values())
+        
+        # Drawdown calculation
+        if self.performance_history:
+            peak_value = max(entry['portfolio_value'] for entry in self.performance_history)
+            current_drawdown = (peak_value - total_value) / peak_value if peak_value > 0 else 0
+        else:
+            current_drawdown = 0
+            
+        # VAR-like metric (simplified)
+        recent_returns = []
+        for i in range(1, min(21, len(self.performance_history))):
+            current = self.performance_history[-i]['portfolio_value']
+            previous = self.performance_history[-i-1]['portfolio_value'] if i < len(self.performance_history) - 1 else current
+            if previous > 0:
+                ret = (current - previous) / previous
+                recent_returns.append(ret)
+                
+        volatility = np.std(recent_returns) if recent_returns else 0
+        var_95 = np.percentile(recent_returns, 5) if recent_returns else 0
+        
+        metrics = {
+            'total_value': total_value,
+            'cash_balance': self.cash_balance,
+            'total_pnl': self.total_pnl,
+            'daily_pnl': self.daily_pnl,
+            'current_drawdown': current_drawdown,
+            'concentration_index': concentration,
+            'volatility': volatility,
+            'value_at_risk_95': var_95,
+            'position_count': len(self.positions),
+            'cash_ratio': self.cash_balance / total_value if total_value > 0 else 1.0
+        }
+        
+        return metrics
+
+    def rebalance_portfolio(self, target_allocation: Dict[str, float]) -> List[Dict]:
+        """
+        Rebalance portfolio towards target allocation
+        Returns list of trades needed
+        """
+        current_value = self.get_total_value()
+        current_allocation = self.get_portfolio_allocation()
+        proposed_trades = []
+        
+        for asset, target_weight in target_allocation.items():
+            current_weight = current_allocation.get(asset, 0)
+            weight_diff = target_weight - current_weight
+            
+            if abs(weight_diff) < 0.01:  # 1% threshold
+                continue
+                
+            trade_value = weight_diff * current_value
+            
+            if asset == self.bridge_currency:
+                # Adjust cash position (not typically traded)
+                continue
+                
+            # Determine trade side and quantity
+            if trade_value > 0:
+                # Buy
+                side = 'BUY'
+                # Get current price for quantity calculation
+                try:
+                    price_data = self.api_client.get_symbol_price(asset)
+                    price = float(price_data['price'])
+                    quantity = trade_value / price
+                except:
+                    continue
+            else:
+                # Sell
+                side = 'SELL'
+                # Use current position for quantity
+                current_position = self.positions.get(asset, {}).get('quantity', 0)
+                quantity = min(abs(trade_value) / current_value * current_position, current_position)
+                
+            if quantity > 0:
+                proposed_trades.append({
+                    'symbol': asset,
+                    'side': side,
+                    'quantity': quantity,
+                    'value': abs(trade_value),
+                    'reason': f"Rebalance to {target_weight*100:.1f}%"
+                })
+                
+        self.logger.info(f"Rebalancing proposed {len(proposed_trades)} trades")
+        return proposed_trades
+
+    def get_performance_report(self, period: str = 'daily') -> Dict[str, Any]:
+        """Generate performance report for specified period"""
+        if not self.performance_history:
+            return {}
+            
+        # Filter data based on period
+        now = time.time()
+        if period == 'daily':
+            cutoff = now - 24 * 3600
+        elif period == 'weekly':
+            cutoff = now - 7 * 24 * 3600
+        elif period == 'monthly':
+            cutoff = now - 30 * 24 * 3600
+        else:
+            cutoff = 0
+            
+        period_data = [entry for entry in self.performance_history if entry['timestamp'] >= cutoff]
+        
+        if not period_data:
+            return {}
+            
+        start_value = period_data[0]['portfolio_value']
+        end_value = period_data[-1]['portfolio_value']
+        returns = (end_value - start_value) / start_value if start_value > 0 else 0
+        
+        # Calculate volatility
+        values = [entry['portfolio_value'] for entry in period_data]
+        returns_series = []
+        for i in range(1, len(values)):
+            if values[i-1] > 0:
+                ret = (values[i] - values[i-1]) / values[i-1]
+                returns_series.append(ret)
+                
+        volatility = np.std(returns_series) if returns_series else 0
+        
+        # Sharpe ratio (simplified, assuming 0 risk-free rate)
+        sharpe = returns / volatility if volatility > 0 else 0
+        
+        # Max drawdown
+        peak = values[0]
+        max_drawdown = 0
+        for value in values:
+            if value > peak:
+                peak = value
+            drawdown = (peak - value) / peak
+            if drawdown > max_drawdown:
+                max_drawdown = drawdown
+                
+        report = {
+            'period': period,
+            'start_value': start_value,
+            'end_value': end_value,
+            'return': returns,
+            'volatility': volatility,
+            'sharpe_ratio': sharpe,
+            'max_drawdown': max_drawdown,
+            'trade_count': len([t for t in self.trade_history if t['timestamp'] >= cutoff]),
+            'win_rate': self._calculate_win_rate(cutoff)
+        }
+        
+        return report
+
+    def _calculate_win_rate(self, since_timestamp: float) -> float:
+        """Calculate win rate of trades since timestamp"""
+        recent_trades = [t for t in self.trade_history if t['timestamp'] >= since_timestamp]
+        if not recent_trades:
+            return 0.0
+            
+        # Simplified win rate calculation
+        # In a real implementation, you'd track trade outcomes
+        winning_trades = 0
+        for trade in recent_trades:
+            # This is a placeholder - actual implementation would require tracking trade outcomes
+            if trade['side'] == 'BUY':
+                # Check if current price is above entry
+                pass
+            elif trade['side'] == 'SELL':
+                # Check if current price is below entry
+                pass
+                
+        return winning_trades / len(recent_trades) if recent_trades else 0.0
+
+    def validate_risk_limits(self) -> Tuple[bool, List[str]]:
+        """
+        Validate portfolio against all risk limits
+        Returns (is_valid, violations)
+        """
+        violations = []
+        metrics = self.get_risk_metrics()
+        
+        # Check drawdown limit
+        if metrics['current_drawdown'] > self.max_drawdown:
+            violations.append(f"Drawdown {metrics['current_drawdown']:.1%} exceeds limit {self.max_drawdown:.1%}")
+            
+        # Check daily loss limit
+        if self.daily_pnl < -self.initial_balance * self.max_daily_loss:
+            violations.append(f"Daily loss {self.daily_pnl:.2f} exceeds limit")
+            
+        # Check concentration risk
+        if metrics['concentration_index'] > 0.3:  # Arbitrary threshold
+            violations.append("Portfolio too concentrated")
+            
+        # Check cash ratio
+        if metrics['cash_ratio'] < 0.05:  # At least 5% cash
+            violations.append("Insufficient cash balance")
+            
+        is_valid = len(violations) == 0
+        return is_valid, violations
 
 ### [FILE] core/turbo_arbitrage.py
 import numpy as np
