@@ -81,15 +81,15 @@ BinanceBot/
 │   ├── free_tier_optimizer.py
 │   ├── schedule_manager.py
 ├── run.py
-├── collections.py
+├── custom_collections.py
 ├── requirements.txt
-├── custom_types.txt
+├── custom_types.py
 └── main.py
-└── custom_types.py
 └── README.md
 └── run_ws.py
 └── run.sh
 └── monitor.sh
+
 
 the code of the bot that containes 67 files that are named strating with ### [FILE]. there are 10220 lines
 ### [FILE] utils/queue.py 
@@ -10919,4 +10919,3 @@ def retry_request(func, retries=3, delay=1):
             print(f"[RETRY] Attempt {attempt+1} failed: {e}")
             time.sleep(delay)
     raise Exception("[RETRY] All attempts failed.")
-
